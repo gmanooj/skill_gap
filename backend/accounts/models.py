@@ -25,73 +25,125 @@ class Student(models.Model):
     def __str__(self):
         return f"{self.name} ({self.email}) - {self.role}"
 
+class Skill(models.Model):
+    skill_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True)
+    category = models.CharField(max_length=100, default='Technical')
+
+    class Meta:
+        db_table = 'skills'
+
+    def __str__(self):
+        return self.name
+
 class StudentSkill(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='skills')
-    skill_name = models.CharField(max_length=100)
-    proficiency_level = models.IntegerField(default=1)  # 1 to 5
-    proficiency_tag = models.CharField(max_length=50, default='Beginner')  # Beginner, Basic, Intermediate, Advanced, Expert
-    updated_at = models.DateTimeField(auto_now=True)
+    id = models.AutoField(primary_key=True)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='skills', db_column='student_id')
+    skill = models.ForeignKey(Skill, on_delete=models.CASCADE, related_name='student_skills', db_column='skill_id')
+    proficiency = models.CharField(max_length=50, default='1')  # '1' to '5' or label
 
     class Meta:
         db_table = 'student_skills'
-        unique_together = ('student', 'skill_name')
+
+    @property
+    def skill_name(self):
+        return self.skill.name
+
+    @property
+    def proficiency_level(self):
+        try:
+            return int(self.proficiency)
+        except:
+            mapping = {'Beginner': 1, 'Basic': 2, 'Intermediate': 3, 'Advanced': 4, 'Expert': 5}
+            return mapping.get(self.proficiency, 1)
+
+    @property
+    def proficiency_tag(self):
+        lvl = self.proficiency_level
+        if lvl >= 4:
+            return 'Advanced'
+        elif lvl == 3:
+            return 'Intermediate'
+        elif lvl == 2:
+            return 'Basic'
+        return 'Beginner'
 
     def __str__(self):
-        return f"{self.student.name} - {self.skill_name}: {self.proficiency_level}/5"
+        return f"{self.student.name} - {self.skill.name}: {self.proficiency}"
 
 class Job(models.Model):
+    job_id = models.AutoField(primary_key=True)
+    company = models.CharField(max_length=150)
     title = models.CharField(max_length=150)
-    company = models.CharField(max_length=150, default='Tech Solutions Inc')
-    location = models.CharField(max_length=150, default='Remote / Chennai')
+    location = models.CharField(max_length=100, default='Remote / Chennai')
     department = models.CharField(max_length=150, default='Core Product Engineering')
     experience = models.CharField(max_length=100, default='2–4 Years Experience')
     description = models.TextField(blank=True, default='')
-    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         db_table = 'jobs'
 
+    @property
+    def id(self):
+        return self.job_id
+
     def __str__(self):
         return f"{self.title} at {self.company}"
 
-class JobRequirement(models.Model):
-    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='requirements')
-    skill_name = models.CharField(max_length=100)
-    required_level = models.IntegerField(default=3)  # 1 to 5
+class JobSkill(models.Model):
+    id = models.AutoField(primary_key=True)
+    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='job_skills', db_column='job_id')
+    skill = models.ForeignKey(Skill, on_delete=models.CASCADE, related_name='job_skills', db_column='skill_id')
+    required_level = models.CharField(max_length=50, default='3')
     mandatory = models.BooleanField(default=True)
-    category = models.CharField(max_length=100, default='Technical')
 
     class Meta:
-        db_table = 'job_requirements'
-        unique_together = ('job', 'skill_name')
+        db_table = 'job_skills'
+
+    @property
+    def skill_name(self):
+        return self.skill.name
+
+    @property
+    def level_int(self):
+        try:
+            return int(self.required_level)
+        except:
+            mapping = {'Beginner': 1, 'Basic': 2, 'Intermediate': 3, 'Advanced': 4, 'Expert': 5}
+            return mapping.get(self.required_level, 3)
 
     def __str__(self):
-        return f"{self.job.title} - {self.skill_name}: {self.required_level}/5 (Mandatory: {self.mandatory})"
+        return f"{self.job.title} - {self.skill.name}: {self.required_level} (Mandatory: {self.mandatory})"
 
-class JobApplication(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='applications')
-    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='applications')
-    applied_at = models.DateTimeField(default=timezone.now)
+class Application(models.Model):
+    id = models.AutoField(primary_key=True)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='applications', db_column='student_id')
+    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='applications', db_column='job_id')
+    match_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0.0)
     status = models.CharField(max_length=50, default='Applied')
 
     class Meta:
-        db_table = 'job_applications'
-        unique_together = ('student', 'job')
+        db_table = 'applications'
 
     def __str__(self):
-        return f"{self.student.name} -> {self.job.company} ({self.job.title})"
+        return f"{self.student.name} -> {self.job.company} ({self.status})"
 
 class Recommendation(models.Model):
-    skill_name = models.CharField(max_length=100)
-    priority = models.CharField(max_length=20, choices=(('High', 'High'), ('Medium', 'Medium'), ('Low', 'Low')), default='Medium')
-    target_level = models.IntegerField(default=3)
-    reason = models.CharField(max_length=255)
+    id = models.AutoField(primary_key=True)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, null=True, blank=True, db_column='student_id')
+    job = models.ForeignKey(Job, on_delete=models.CASCADE, null=True, blank=True, db_column='job_id')
+    skill = models.ForeignKey(Skill, on_delete=models.CASCADE, null=True, blank=True, db_column='skill_id')
+    priority = models.CharField(max_length=50, default='Medium')
+    reason = models.TextField(blank=True, default='')
     course_title = models.CharField(max_length=255, blank=True, default='')
     provider = models.CharField(max_length=100, blank=True, default='')
 
     class Meta:
         db_table = 'recommendations'
 
-    def __str__(self):
-        return f"{self.priority} Priority: {self.skill_name} -> {self.target_level}"
+    @property
+    def skill_name(self):
+        return self.skill.name if self.skill else 'General'
 
+    def __str__(self):
+        return f"{self.priority} Priority: {self.skill_name}"

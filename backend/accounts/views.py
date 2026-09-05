@@ -8,8 +8,7 @@ from django.conf import settings
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from django.db.models import Avg, Count
-from .models import Student, StudentSkill, Job, JobRequirement, JobApplication, Recommendation
+from .models import Student, Skill, StudentSkill, Job, JobSkill, Application, Recommendation
 
 EMAIL_REGEX = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
 JWT_SECRET = getattr(settings, 'JWT_SECRET', 'skill_gap_analyzer_jwt_super_secure_secret_2026_key')
@@ -35,7 +34,8 @@ def get_student_from_request(request):
             student = None
 
     if not student:
-        student = Student.objects.filter(role='student').first()
+        # Fallback to Arun (student_id=2 or first student)
+        student = Student.objects.filter(email='arun@example.com').first() or Student.objects.filter(role='student').first()
 
     return student
 
@@ -97,25 +97,19 @@ def register_view(request):
             created_at=timezone.now()
         )
 
-        # Seed default starting skills
-        default_skills = [
-            ('Java', 4),
-            ('MySQL', 4),
-            ('Python', 3),
-            ('React', 2),
-            ('AWS', 1),
-        ]
+        # Seed default starting skills from `skills` table
+        default_skills = [('Java', '4'), ('MySQL', '4'), ('Python', '3'), ('React', '2'), ('AWS', '1')]
         for s_name, s_lvl in default_skills:
+            skill_obj, _ = Skill.objects.get_or_create(name=s_name, defaults={'category': 'Technical'})
             StudentSkill.objects.create(
                 student=student,
-                skill_name=s_name,
-                proficiency_level=s_lvl,
-                proficiency_tag=get_proficiency_tag(s_lvl)
+                skill=skill_obj,
+                proficiency=s_lvl
             )
 
         return JsonResponse({
             'success': True,
-            'message': 'The data has been updated to the DB'
+            'message': 'Account registered successfully.'
         }, status=201)
 
     except Exception as e:
@@ -147,7 +141,13 @@ def login_view(request):
                 'message': 'Invalid email or password credentials.'
             }, status=401)
 
-        is_valid = bcrypt.checkpw(password.encode('utf-8'), student.password.encode('utf-8'))
+        is_valid = False
+        try:
+            is_valid = bcrypt.checkpw(password.encode('utf-8'), student.password.encode('utf-8'))
+        except Exception:
+            # Fallback for plain text or legacy password comparison
+            is_valid = (password == student.password)
+
         if not is_valid:
             return JsonResponse({
                 'success': False,
@@ -283,41 +283,41 @@ def reset_password_view(request):
 
 def dashboard_stats_view(request):
     student = get_student_from_request(request)
-    total_employees = Student.objects.filter(role='student').count() or 250
-    total_jobs = Job.objects.count() or 45
-    applications_count = JobApplication.objects.count() or 120
+    total_employees = Student.objects.filter(role='student').count() or 10
+    total_jobs = Job.objects.count() or 3
+    applications_count = Application.objects.count() or 2
 
     # Calculate average skill match from DB
-    jobs = Job.objects.all()
+    jobs = Job.objects.prefetch_related('job_skills__skill').all()
     student_skills_map = {
-        s.skill_name.lower(): s.proficiency_level
-        for s in student.skills.all()
+        s.skill.name.lower(): s.proficiency_level
+        for s in student.skills.select_related('skill').all()
     } if student else {}
 
     all_matches = []
     for j in jobs:
-        reqs = j.requirements.all()
+        reqs = j.job_skills.all()
         if reqs.exists():
-            tot_req = sum(r.required_level for r in reqs)
-            tot_mat = sum(min(student_skills_map.get(r.skill_name.lower(), 1), r.required_level) for r in reqs)
+            tot_req = sum(r.level_int for r in reqs)
+            tot_mat = sum(min(student_skills_map.get(r.skill.name.lower(), 1), r.level_int) for r in reqs)
             pct = (tot_mat / tot_req) * 100 if tot_req > 0 else 70
             all_matches.append(pct)
 
-    avg_match = int(sum(all_matches) / len(all_matches)) if all_matches else 74
+    avg_match = int(sum(all_matches) / len(all_matches)) if all_matches else 78
 
     top_gaps = [
         {
             'skill': 'Spring Boot',
             'deficitPercent': 78,
-            'currentScore': '2.0 / 5',
-            'requiredScore': '4.5 / 5',
+            'currentScore': '1.0 / 5',
+            'requiredScore': '4.0 / 5',
             'color': '#ff3b30',
             'note': 'Highest Deficit'
         },
         {
             'skill': 'React',
             'deficitPercent': 62,
-            'currentScore': '2.4 / 5',
+            'currentScore': '2.0 / 5',
             'requiredScore': '4.0 / 5',
             'color': '#ff9500',
             'note': 'Critical Gap'
@@ -325,16 +325,16 @@ def dashboard_stats_view(request):
         {
             'skill': 'AWS',
             'deficitPercent': 54,
-            'currentScore': '1.8 / 5',
-            'requiredScore': '3.8 / 5',
+            'currentScore': '1.0 / 5',
+            'requiredScore': '3.0 / 5',
             'color': '#ff9500',
             'note': 'High Priority'
         },
         {
             'skill': 'Docker',
             'deficitPercent': 45,
-            'currentScore': '2.2 / 5',
-            'requiredScore': '3.5 / 5',
+            'currentScore': '1.0 / 5',
+            'requiredScore': '3.0 / 5',
             'color': '#0071e3',
             'note': 'Moderate Gap'
         }
@@ -360,37 +360,13 @@ def student_profile_view(request):
             'message': 'Student profile not found.'
         }, status=404)
 
-    skills = list(student.skills.all().values('id', 'skill_name', 'proficiency_level', 'proficiency_tag', 'updated_at'))
-    if not skills:
-        default_skills = [
-            ('Java', 4),
-            ('MySQL', 4),
-            ('Python', 3),
-            ('React', 2),
-            ('AWS', 1),
-        ]
-        for s_name, s_lvl in default_skills:
-            obj = StudentSkill.objects.create(
-                student=student,
-                skill_name=s_name,
-                proficiency_level=s_lvl,
-                proficiency_tag=get_proficiency_tag(s_lvl)
-            )
-            skills.append({
-                'id': obj.id,
-                'skill_name': obj.skill_name,
-                'proficiency_level': obj.proficiency_level,
-                'proficiency_tag': obj.proficiency_tag,
-                'updated_at': obj.updated_at
-            })
-
+    skills = student.skills.select_related('skill').all()
     formatted_skills = [
         {
-            'id': s['id'],
-            'skill': s['skill_name'],
-            'level': s['proficiency_level'],
-            'tag': s['proficiency_tag'],
-            'updatedAt': s.get('updated_at')
+            'id': s.id,
+            'skill': s.skill.name,
+            'level': s.proficiency_level,
+            'tag': s.proficiency_tag
         }
         for s in skills
     ]
@@ -425,25 +401,23 @@ def add_or_update_skill_view(request):
         if not student:
             return JsonResponse({'success': False, 'message': 'Authentication required.'}, status=401)
 
-        tag = get_proficiency_tag(level)
-        skill_obj, created = StudentSkill.objects.update_or_create(
+        skill_obj, _ = Skill.objects.get_or_create(name=skill_name, defaults={'category': 'Technical'})
+        
+        student_skill, created = StudentSkill.objects.update_or_create(
             student=student,
-            skill_name=skill_name,
-            defaults={
-                'proficiency_level': level,
-                'proficiency_tag': tag
-            }
+            skill=skill_obj,
+            defaults={'proficiency': str(level)}
         )
 
         return JsonResponse({
             'success': True,
-            'message': f'Skill "{skill_name}" with rating {level}/5 successfully saved to database.',
+            'message': f'Skill "{skill_name}" with rating {level}/5 successfully updated to the DB.',
             'created': created,
             'skill': {
-                'id': skill_obj.id,
-                'skill': skill_obj.skill_name,
-                'level': skill_obj.proficiency_level,
-                'tag': skill_obj.proficiency_tag
+                'id': student_skill.id,
+                'skill': skill_obj.name,
+                'level': student_skill.proficiency_level,
+                'tag': student_skill.proficiency_tag
             }
         })
 
@@ -459,12 +433,12 @@ def delete_skill_view(request, skill_id):
     if not student:
         return JsonResponse({'success': False, 'message': 'Authentication required.'}, status=401)
 
-    skill_obj = StudentSkill.objects.filter(id=skill_id, student=student).first()
-    if not skill_obj:
+    student_skill = StudentSkill.objects.filter(id=skill_id, student=student).first()
+    if not student_skill:
         return JsonResponse({'success': False, 'message': 'Skill not found.'}, status=404)
 
-    skill_name = skill_obj.skill_name
-    skill_obj.delete()
+    skill_name = student_skill.skill.name
+    student_skill.delete()
 
     return JsonResponse({
         'success': True,
@@ -475,28 +449,28 @@ def jobs_list_view(request):
     student = get_student_from_request(request)
     applied_job_ids = set()
     if student:
-        applied_job_ids = set(JobApplication.objects.filter(student=student).values_list('job_id', flat=True))
+        applied_job_ids = set(Application.objects.filter(student=student).values_list('job_id', flat=True))
 
-    jobs = Job.objects.all().order_by('id')
+    jobs = Job.objects.prefetch_related('job_skills__skill').all().order_by('job_id')
     jobs_data = []
 
     for job in jobs:
-        reqs = list(job.requirements.all().values('id', 'skill_name', 'required_level', 'mandatory', 'category'))
+        reqs = job.job_skills.all()
         formatted_reqs = [
             {
-                'id': r['id'],
-                'skill': r['skill_name'],
-                'level': r['required_level'],
-                'mandatory': r['mandatory'],
-                'category': r['category']
+                'id': r.id,
+                'skill': r.skill.name,
+                'level': r.level_int,
+                'mandatory': r.mandatory,
+                'category': r.skill.category
             }
             for r in reqs
         ]
-        is_applied = job.id in applied_job_ids
-        app = JobApplication.objects.filter(student=student, job=job).first() if is_applied else None
+        is_applied = job.job_id in applied_job_ids
+        app = Application.objects.filter(student=student, job=job).first() if is_applied else None
 
         jobs_data.append({
-            'id': job.id,
+            'id': job.job_id,
             'title': job.title,
             'company': job.company,
             'location': job.location,
@@ -505,7 +479,6 @@ def jobs_list_view(request):
             'description': job.description,
             'isApplied': is_applied,
             'applicationStatus': app.status if app else None,
-            'appliedAt': app.applied_at.strftime('%b %d, %Y') if app else None,
             'requirements': formatted_reqs
         })
 
@@ -523,14 +496,14 @@ def apply_job_view(request, job_id):
     if not student:
         return JsonResponse({'success': False, 'message': 'Authentication required.'}, status=401)
 
-    job = Job.objects.filter(id=job_id).first()
+    job = Job.objects.filter(job_id=job_id).first()
     if not job:
         return JsonResponse({'success': False, 'message': 'Job not found.'}, status=404)
 
-    app, created = JobApplication.objects.get_or_create(
+    app, created = Application.objects.get_or_create(
         student=student,
         job=job,
-        defaults={'status': 'Applied', 'applied_at': timezone.now()}
+        defaults={'status': 'Applied', 'match_percent': 78.0}
     )
 
     return JsonResponse({
@@ -545,7 +518,7 @@ def skill_gap_analysis_view(request):
     job_id = request.GET.get('job_id')
 
     if job_id:
-        selected_job = Job.objects.filter(id=job_id).first()
+        selected_job = Job.objects.filter(job_id=job_id).first()
     else:
         selected_job = Job.objects.first()
 
@@ -553,8 +526,8 @@ def skill_gap_analysis_view(request):
         return JsonResponse({'success': False, 'message': 'No jobs available for analysis.'}, status=404)
 
     student_skills_map = {
-        s.skill_name.lower(): s.proficiency_level
-        for s in student.skills.all()
+        s.skill.name.lower(): s.proficiency_level
+        for s in student.skills.select_related('skill').all()
     } if student else {}
 
     # 1. Detailed Analysis for Selected Job
@@ -562,9 +535,9 @@ def skill_gap_analysis_view(request):
     total_required = 0
     total_matched = 0
 
-    for req in selected_job.requirements.all():
-        current_lvl = student_skills_map.get(req.skill_name.lower(), 1)
-        required_lvl = req.required_level
+    for req in selected_job.job_skills.select_related('skill').all():
+        current_lvl = student_skills_map.get(req.skill.name.lower(), 1)
+        required_lvl = req.level_int
         gap = max(0, required_lvl - current_lvl)
         status = 'Matched' if gap == 0 else f'Gap: {gap}'
 
@@ -572,7 +545,7 @@ def skill_gap_analysis_view(request):
         total_matched += min(current_lvl, required_lvl)
 
         analysis_data.append({
-            'skill': req.skill_name,
+            'skill': req.skill.name,
             'current': current_lvl,
             'required': required_lvl,
             'gap': gap,
@@ -583,18 +556,18 @@ def skill_gap_analysis_view(request):
     match_percentage = int((total_matched / total_required) * 100) if total_required > 0 else 0
 
     # 2. Multi-Company Applications & Comparison Matrix
-    all_jobs = Job.objects.all()
-    applied_job_ids = set(JobApplication.objects.filter(student=student).values_list('job_id', flat=True)) if student else set()
+    all_jobs = Job.objects.prefetch_related('job_skills__skill').all()
+    applied_job_ids = set(Application.objects.filter(student=student).values_list('job_id', flat=True)) if student else set()
 
     company_comparisons = []
     for j in all_jobs:
-        j_reqs = j.requirements.all()
-        j_total_req = sum(r.required_level for r in j_reqs)
-        j_total_matched = sum(min(student_skills_map.get(r.skill_name.lower(), 1), r.required_level) for r in j_reqs)
+        j_reqs = j.job_skills.all()
+        j_total_req = sum(r.level_int for r in j_reqs)
+        j_total_matched = sum(min(student_skills_map.get(r.skill.name.lower(), 1), r.level_int) for r in j_reqs)
         j_match_pct = int((j_total_matched / j_total_req) * 100) if j_total_req > 0 else 0
         
-        gaps_count = sum(1 for r in j_reqs if max(0, r.required_level - student_skills_map.get(r.skill_name.lower(), 1)) > 0)
-        avg_gap_val = round(sum(max(0, r.required_level - student_skills_map.get(r.skill_name.lower(), 1)) for r in j_reqs) / len(j_reqs), 1) if j_reqs else 0.0
+        gaps_count = sum(1 for r in j_reqs if max(0, r.level_int - student_skills_map.get(r.skill.name.lower(), 1)) > 0)
+        avg_gap_val = round(sum(max(0, r.level_int - student_skills_map.get(r.skill.name.lower(), 1)) for r in j_reqs) / len(j_reqs), 1) if j_reqs else 0.0
 
         # Determine Selection Probability & Color Code
         if j_match_pct >= 75:
@@ -610,11 +583,11 @@ def skill_gap_analysis_view(request):
             color_dot = '#ff3b30'  # Red
             dot_label = 'High Skill Gap'
 
-        is_applied = j.id in applied_job_ids
-        app_obj = JobApplication.objects.filter(student=student, job=j).first() if is_applied else None
+        is_applied = j.job_id in applied_job_ids
+        app_obj = Application.objects.filter(student=student, job=j).first() if is_applied else None
 
         company_comparisons.append({
-            'jobId': j.id,
+            'jobId': j.job_id,
             'company': j.company,
             'title': j.title,
             'matchPercentage': j_match_pct,
@@ -625,7 +598,7 @@ def skill_gap_analysis_view(request):
             'dotLabel': dot_label,
             'isApplied': is_applied,
             'applicationStatus': app_obj.status if app_obj else 'Not Applied',
-            'appliedAt': app_obj.applied_at.strftime('%b %d, %Y') if app_obj else None
+            'appliedAt': 'Recent'
         })
 
     # Sort company comparisons: Applied first, then highest match %
@@ -637,13 +610,13 @@ def skill_gap_analysis_view(request):
     return JsonResponse({
         'success': True,
         'selectedJob': {
-            'id': selected_job.id,
+            'id': selected_job.job_id,
             'title': selected_job.title,
             'company': selected_job.company,
             'location': selected_job.location,
             'department': selected_job.department,
             'experience': selected_job.experience,
-            'isApplied': selected_job.id in applied_job_ids
+            'isApplied': selected_job.job_id in applied_job_ids
         },
         'employee': {
             'name': student.name if student else 'Arun',
@@ -657,45 +630,328 @@ def skill_gap_analysis_view(request):
     })
 
 def recommendations_view(request):
-    recs = Recommendation.objects.all()
-    if not recs.exists():
-        default_recs = [
-            ('Spring Boot', 'High', 4, 'Mandatory job requirement', 'Spring Boot 3 Masterclass', 'Udemy'),
-            ('React', 'Medium', 3, 'Required proficiency gap', 'Complete React Developer in 2026', 'Coursera'),
-            ('AWS', 'Medium', 2, 'Required supporting skill', 'AWS Certified Cloud Practitioner', 'A Cloud Guru'),
-        ]
-        for s_name, prio, tgt, rsn, crs, prov in default_recs:
-            Recommendation.objects.create(
-                skill_name=s_name,
-                priority=prio,
-                target_level=tgt,
-                reason=rsn,
-                course_title=crs,
-                provider=prov
-            )
-        recs = Recommendation.objects.all()
-
+    recs = Recommendation.objects.select_related('skill', 'job').all()
     student = get_student_from_request(request)
     student_skills_map = {
-        s.skill_name.lower(): s.proficiency_level
-        for s in student.skills.all()
+        s.skill.name.lower(): s.proficiency_level
+        for s in student.skills.select_related('skill').all()
     } if student else {}
 
-    formatted_recs = [
-        {
+    # 1. Compute Best Recommended Jobs & Placement Chance from Database
+    all_jobs = Job.objects.prefetch_related('job_skills__skill').all()
+    applied_job_ids = set(Application.objects.filter(student=student).values_list('job_id', flat=True)) if student else set()
+
+    recommended_jobs = []
+    for j in all_jobs:
+        j_reqs = j.job_skills.all()
+        j_total_req = sum(r.level_int for r in j_reqs)
+        j_total_matched = sum(min(student_skills_map.get(r.skill.name.lower(), 1), r.level_int) for r in j_reqs)
+        j_match_pct = int((j_total_matched / j_total_req) * 100) if j_total_req > 0 else 0
+
+        matched_skills = []
+        gap_skills = []
+        for r in j_reqs:
+            curr = student_skills_map.get(r.skill.name.lower(), 1)
+            if curr >= r.level_int:
+                matched_skills.append(r.skill.name)
+            else:
+                gap_skills.append({'skill': r.skill.name, 'current': curr, 'required': r.level_int})
+
+        if j_match_pct >= 75:
+            placement_chance = 'High Placement Chance'
+            color_badge = '#059669'
+            badge_bg = '#ecfdf5'
+            border_color = '#a7f3d0'
+        elif j_match_pct >= 50:
+            placement_chance = 'Moderate Placement Chance'
+            color_badge = '#d97706'
+            badge_bg = '#fffbeb'
+            border_color = '#fde68a'
+        else:
+            placement_chance = 'Requires Skill Upskilling'
+            color_badge = '#6366f1'
+            badge_bg = '#eef2ff'
+            border_color = '#c7d2fe'
+
+        is_applied = j.job_id in applied_job_ids
+        app_obj = Application.objects.filter(student=student, job=j).first() if is_applied else None
+
+        recommended_jobs.append({
+            'id': j.job_id,
+            'company': j.company,
+            'title': j.title,
+            'location': j.location,
+            'experience': j.experience,
+            'department': j.department,
+            'matchPercentage': j_match_pct,
+            'placementChance': placement_chance,
+            'colorBadge': color_badge,
+            'badgeBg': badge_bg,
+            'borderColor': border_color,
+            'matchedSkills': matched_skills,
+            'gapSkills': gap_skills,
+            'isApplied': is_applied,
+            'applicationStatus': app_obj.status if app_obj else 'Not Applied',
+            'isTopPick': False
+        })
+
+    # Sort by highest match percentage
+    recommended_jobs.sort(key=lambda x: x['matchPercentage'], reverse=True)
+    if recommended_jobs:
+        recommended_jobs[0]['isTopPick'] = True
+
+    # 2. Compute Priority Learning Roadmap
+    formatted_recs = []
+    for r in recs:
+        s_name = r.skill.name if r.skill else 'General Skill'
+        curr_val = student_skills_map.get(s_name.lower(), 1)
+        tgt_val = 4 if r.priority == 'High' else 3
+        formatted_recs.append({
             'id': r.id,
-            'skill': r.skill_name,
+            'skill': s_name,
             'priority': r.priority,
-            'current': student_skills_map.get(r.skill_name.lower(), 1),
-            'target': r.target_level,
+            'current': curr_val,
+            'target': tgt_val,
             'reason': r.reason,
-            'courseTitle': r.course_title,
-            'provider': r.provider
-        }
-        for r in recs
-    ]
+            'courseTitle': r.course_title or f'{s_name} Advanced Masterclass',
+            'provider': r.provider or 'Coursera / Udemy',
+            'placementImpact': f"+{min(20, (tgt_val - curr_val) * 8)}% Placement Readiness"
+        })
+
+    # Sort recommendations by highest gap
+    formatted_recs.sort(key=lambda x: (x['target'] - x['current']), reverse=True)
+
+    avg_readiness = int(sum(j['matchPercentage'] for j in recommended_jobs) / len(recommended_jobs)) if recommended_jobs else 75
 
     return JsonResponse({
         'success': True,
+        'overallReadiness': f"{avg_readiness}%",
+        'bestMatchCompany': recommended_jobs[0]['company'] if recommended_jobs else 'ABC Technologies',
+        'bestMatchJobTitle': recommended_jobs[0]['title'] if recommended_jobs else 'Java Full Stack Developer',
+        'recommendedJobs': recommended_jobs,
         'recommendations': formatted_recs
     })
+
+# ============================================================================
+# Admin Management & Candidate Screening Endpoints
+# ============================================================================
+
+def admin_students_list_view(request):
+    """
+    Returns full student directory with dynamic skills breakdown, 
+    match percentages against active jobs, and gap indicators for Amazon-style filtering.
+    """
+    students = Student.objects.filter(role='student').prefetch_related('skills__skill', 'applications__job').order_by('student_id')
+    jobs = Job.objects.prefetch_related('job_skills__skill').all()
+
+    students_data = []
+    for st in students:
+        skills_map = {s.skill.name: s.proficiency_level for s in st.skills.all()}
+        
+        # Calculate best match and average match across all jobs
+        job_matches = []
+        for j in jobs:
+            reqs = j.job_skills.all()
+            if reqs.exists():
+                tot_req = sum(r.level_int for r in reqs)
+                tot_mat = sum(min(skills_map.get(r.skill.name, 1), r.level_int) for r in reqs)
+                pct = int((tot_mat / tot_req) * 100) if tot_req > 0 else 0
+                job_matches.append({'job_id': j.job_id, 'company': j.company, 'title': j.title, 'match': pct})
+
+        best_match = max(job_matches, key=lambda x: x['match']) if job_matches else {'company': 'N/A', 'match': 0}
+        avg_match = int(sum(m['match'] for m in job_matches) / len(job_matches)) if job_matches else 0
+
+        # Determine Gap Type
+        if avg_match >= 75:
+            gap_type = 'Low Gap (High Match)'
+            gap_badge = 'success'
+        elif avg_match >= 50:
+            gap_type = 'Moderate Gap'
+            gap_badge = 'warning'
+        else:
+            gap_type = 'High Gap'
+            gap_badge = 'danger'
+
+        # Java specific gap
+        java_level = skills_map.get('Java', 0)
+        has_java_low_gap = java_level >= 4
+
+        formatted_skills = [
+            {'name': s.skill.name, 'level': s.proficiency_level, 'tag': s.proficiency_tag, 'category': s.skill.category}
+            for s in st.skills.all()
+        ]
+
+        applied_companies = [app.job.company for app in st.applications.all()]
+
+        students_data.append({
+            'student_id': st.student_id,
+            'name': st.name,
+            'email': st.email,
+            'target_title': st.target_title or 'Software Developer',
+            'skills': formatted_skills,
+            'skills_map': skills_map,
+            'java_level': java_level,
+            'has_java_low_gap': has_java_low_gap,
+            'best_match': best_match,
+            'avg_match': avg_match,
+            'gap_type': gap_type,
+            'gap_badge': gap_badge,
+            'applications_count': st.applications.count(),
+            'applied_companies': applied_companies,
+            'created_at': st.created_at.strftime('%Y-%m-%d')
+        })
+
+    return JsonResponse({
+        'success': True,
+        'total_count': len(students_data),
+        'students': students_data
+    })
+
+def admin_candidate_screening_view(request):
+    """
+    Returns all companies / jobs with candidate rankings, 
+    detailed skill match vs deficit breakdowns, and single-skill lag detection.
+    """
+    jobs = Job.objects.prefetch_related('job_skills__skill', 'applications__student__skills__skill').all().order_by('job_id')
+    
+    companies_data = []
+    for job in jobs:
+        reqs = list(job.job_skills.all())
+        tot_req_score = sum(r.level_int for r in reqs) if reqs else 1
+
+        applications = job.applications.select_related('student').all()
+        candidates_list = []
+
+        for app in applications:
+            st = app.student
+            student_skills_map = {s.skill.name: s.proficiency_level for s in st.skills.all()}
+
+            matched_skills = []
+            gap_skills = []
+            tot_matched = 0
+
+            for r in reqs:
+                s_name = r.skill.name
+                req_lvl = r.level_int
+                curr_lvl = student_skills_map.get(s_name, 1)
+
+                tot_matched += min(curr_lvl, req_lvl)
+
+                if curr_lvl >= req_lvl:
+                    matched_skills.append({
+                        'skill': s_name,
+                        'current': curr_lvl,
+                        'required': req_lvl,
+                        'is_matched': True
+                    })
+                else:
+                    gap_amount = req_lvl - curr_lvl
+                    gap_skills.append({
+                        'skill': s_name,
+                        'current': curr_lvl,
+                        'required': req_lvl,
+                        'gap': gap_amount,
+                        'mandatory': r.mandatory,
+                        'is_matched': False
+                    })
+
+            calculated_match = int((tot_matched / tot_req_score) * 100) if tot_req_score > 0 else 0
+
+            # Single Skill Lag Detection: Candidate matches almost all skills but lags in exactly 1 skill
+            has_single_skill_lag = (len(gap_skills) == 1 and len(matched_skills) >= 2)
+            single_skill_lag_desc = None
+            if has_single_skill_lag:
+                g = gap_skills[0]
+                single_skill_lag_desc = f"Strong candidate: Meets {len(matched_skills)} requirements but lags only in {g['skill']} (Current: {g['current']}★ / Required: {g['required']}★)"
+
+            # Probability Badge
+            if calculated_match >= 75:
+                probability = 'High Selection Chance'
+                prob_badge = '#059669'
+                badge_bg = '#ecfdf5'
+            elif calculated_match >= 50:
+                probability = 'Moderate Match'
+                prob_badge = '#d97706'
+                badge_bg = '#fffbeb'
+            else:
+                probability = 'High Skill Gap'
+                prob_badge = '#dc2626'
+                badge_bg = '#fef2f2'
+
+            candidates_list.append({
+                'application_id': app.id,
+                'student_id': st.student_id,
+                'name': st.name,
+                'email': st.email,
+                'target_title': st.target_title or 'Software Developer',
+                'match_percent': calculated_match,
+                'status': app.status,
+                'probability': probability,
+                'prob_badge': prob_badge,
+                'badge_bg': badge_bg,
+                'matched_skills': matched_skills,
+                'gap_skills': gap_skills,
+                'has_single_skill_lag': has_single_skill_lag,
+                'single_skill_lag_desc': single_skill_lag_desc,
+                'skills_map': student_skills_map
+            })
+
+        # Rank candidates: Highest match score first
+        candidates_list.sort(key=lambda x: x['match_percent'], reverse=True)
+
+        avg_score = int(sum(c['match_percent'] for c in candidates_list) / len(candidates_list)) if candidates_list else 0
+        best_candidate = candidates_list[0] if candidates_list else None
+
+        companies_data.append({
+            'job_id': job.job_id,
+            'company': job.company,
+            'title': job.title,
+            'location': job.location,
+            'department': job.department,
+            'experience': job.experience,
+            'requirements_count': len(reqs),
+            'requirements': [{'skill': r.skill.name, 'required': r.level_int, 'mandatory': r.mandatory} for r in reqs],
+            'total_applicants': len(candidates_list),
+            'avg_match_percent': avg_score,
+            'best_candidate': best_candidate,
+            'candidates': candidates_list
+        })
+
+    return JsonResponse({
+        'success': True,
+        'companies': companies_data
+    })
+
+@csrf_exempt
+def admin_update_application_status_view(request):
+    """
+    Allows Admin to update candidate application status in MySQL database 
+    (e.g., 'Shortlisted', 'Interview Scheduled', 'Offer Extended', 'Rejected', 'Under Review').
+    """
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'Method not allowed.'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        app_id = data.get('application_id')
+        new_status = data.get('status', '').strip()
+
+        if not app_id or not new_status:
+            return JsonResponse({'success': False, 'message': 'application_id and status are required.'}, status=400)
+
+        app_obj = Application.objects.filter(id=app_id).select_related('student', 'job').first()
+        if not app_obj:
+            return JsonResponse({'success': False, 'message': 'Application record not found.'}, status=404)
+
+        app_obj.status = new_status
+        app_obj.save()
+
+        return JsonResponse({
+            'success': True,
+            'message': f"Application for {app_obj.student.name} at {app_obj.job.company} updated to '{new_status}' in the DB.",
+            'application_id': app_obj.id,
+            'status': app_obj.status
+        })
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=500)
