@@ -14,6 +14,8 @@ import ResetPassword from './pages/ResetPassword';
 
 // Views
 import Dashboard from './pages/Dashboard';
+import AdminStudents from './pages/AdminStudents';
+import AdminCandidateScreening from './pages/AdminCandidateScreening';
 import StudentProfile from './pages/StudentProfile';
 import JobDetails from './pages/JobDetails';
 import SkillGapAnalysis from './pages/SkillGapAnalysis';
@@ -49,7 +51,24 @@ export default function App() {
               </AdminRoute>
             }
           />
+          <Route
+            path="/admin/students"
+            element={
+              <AdminRoute>
+                <AdminStudents />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/candidates"
+            element={
+              <AdminRoute>
+                <AdminCandidateScreening />
+              </AdminRoute>
+            }
+          />
           <Route path="/dashboard" element={<Navigate to="/admin/dashboard" replace />} />
+          <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
 
           {/* Student & Authenticated Core Views */}
           <Route

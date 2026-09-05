@@ -4,10 +4,9 @@ export default function ProgressBar({ current = 0, total = 5, showLabel = true }
   const percentage = Math.min(100, Math.max(0, (current / total) * 100));
 
   const getColor = (val) => {
-    if (val >= 4) return '#34c759'; // Apple Green
-    if (val === 3) return '#0071e3'; // Apple Blue
-    if (val === 2) return '#ff9500'; // Apple Orange
-    return '#ff3b30'; // Apple Red
+    if (val >= 3.5) return '#10b981'; // Green (high match / proficient)
+    if (val >= 2) return '#f59e0b';   // Yellow (moderate progress)
+    return '#ef4444';                 // Red (deficit / gap indication)
   };
 
   const activeColor = getColor(current);

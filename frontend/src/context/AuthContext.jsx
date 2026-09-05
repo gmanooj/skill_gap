@@ -2,15 +2,16 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const AuthContext = createContext(null);
 
-export const DJANGO_API_BASE_URL = 'http://127.0.0.1:8000/api/auth';
+export const DJANGO_API_BASE_URL = 'http://127.0.0.1:8000/api';
 
 export async function authFetch(endpoint, options = {}) {
-  const url = `${DJANGO_API_BASE_URL}${endpoint}`;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = `${DJANGO_API_BASE_URL}${cleanEndpoint}`;
   try {
     const response = await fetch(url, options);
     return response;
   } catch (err) {
-    const fallbackUrl = `http://localhost:8000/api/auth${endpoint}`;
+    const fallbackUrl = `http://localhost:8000/api${cleanEndpoint}`;
     return await fetch(fallbackUrl, options);
   }
 }

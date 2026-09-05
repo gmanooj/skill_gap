@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { Star, Check, X, Plus, Edit3, Trash2 } from 'lucide-react';
 import { useAuth, authFetch } from '../context/AuthContext';
 import ProgressBar from '../components/ProgressBar';
+import Loader from '../components/Loader';
 
 export default function StudentProfile() {
   const { user, token } = useAuth();
@@ -10,33 +12,31 @@ export default function StudentProfile() {
     email: user?.email || 'arun@skillgap.com',
     role: user?.role || 'student',
     targetTitle: 'Java Full Stack Developer',
-    skills: [
-      { id: 1, skill: 'Java', level: 4, tag: 'Advanced' },
-      { id: 2, skill: 'MySQL', level: 4, tag: 'Advanced' },
-      { id: 3, skill: 'Python', level: 3, tag: 'Intermediate' },
-      { id: 4, skill: 'React', level: 2, tag: 'Basic' },
-      { id: 5, skill: 'AWS', level: 1, tag: 'Beginner' },
-    ],
+    skills: [],
   });
 
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newSkillName, setNewSkillName] = useState('Spring Boot');
-  const [newSkillLevel, setNewSkillLevel] = useState(3);
+  const [editingSkill, setEditingSkill] = useState(null);
+  const [skillNameInput, setSkillNameInput] = useState('Spring Boot');
   const [customSkillInput, setCustomSkillInput] = useState('');
+  const [skillRating, setSkillRating] = useState(3);
   const [saveLoading, setSaveLoading] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState('');
 
-  const availableSkillOptions = [
+  const commonSkillCatalog = [
     'Spring Boot',
+    'React',
+    'Java',
+    'MySQL',
+    'Python',
+    'AWS',
     'Docker',
     'Kubernetes',
     'TypeScript',
-    'Node.js & Express',
-    'GraphQL',
+    'Node.js',
     'PostgreSQL',
-    'Redis Caching',
-    'System Design',
+    'Redis',
     'Other (Custom)',
   ];
 
@@ -55,7 +55,7 @@ export default function StudentProfile() {
         }
       }
     } catch (err) {
-      console.error('[StudentProfile] Using fallback cache for database skills:', err);
+      console.error('[StudentProfile] Error querying database profile:', err);
     } finally {
       setLoading(false);
     }
@@ -86,17 +86,39 @@ export default function StudentProfile() {
     }
   };
 
-  const handleAddSkill = async (e) => {
+  const openAddModal = () => {
+    setEditingSkill(null);
+    setSkillNameInput('Spring Boot');
+    setCustomSkillInput('');
+    setSkillRating(3);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (skillObj) => {
+    setEditingSkill(skillObj);
+    const inCatalog = commonSkillCatalog.includes(skillObj.skill);
+    if (inCatalog && skillObj.skill !== 'Other (Custom)') {
+      setSkillNameInput(skillObj.skill);
+      setCustomSkillInput('');
+    } else {
+      setSkillNameInput('Other (Custom)');
+      setCustomSkillInput(skillObj.skill);
+    }
+    setSkillRating(skillObj.level || 1);
+    setIsModalOpen(true);
+  };
+
+  const handleSaveSkill = async (e) => {
     e.preventDefault();
     const finalSkillName =
-      newSkillName === 'Other (Custom)'
+      skillNameInput === 'Other (Custom)'
         ? customSkillInput.trim()
-        : newSkillName;
+        : skillNameInput;
 
     if (!finalSkillName) return;
 
     setSaveLoading(true);
-    const levelNum = parseInt(newSkillLevel, 10);
+    const levelNum = parseInt(skillRating, 10);
 
     try {
       const response = await authFetch('/student/skills', {
@@ -112,33 +134,79 @@ export default function StudentProfile() {
       });
 
       if (response.ok) {
-        setFeedbackMessage(`Skill "${finalSkillName}" successfully saved to database.`);
-        await fetchProfileFromDb();
-      } else {
-        // Local state update fallback
-        const existingIndex = studentData.skills.findIndex(
-          (s) => s.skill.toLowerCase() === finalSkillName.toLowerCase()
+        setFeedbackMessage(
+          `Skill "${finalSkillName}" (${levelNum}/5) successfully saved to database.`
         );
-        const tag = getTagFromLevel(levelNum);
-        let updatedSkills = [...studentData.skills];
-        if (existingIndex >= 0) {
-          updatedSkills[existingIndex] = { ...updatedSkills[existingIndex], level: levelNum, tag };
-        } else {
-          updatedSkills.push({ id: Date.now(), skill: finalSkillName, level: levelNum, tag });
-        }
-        setStudentData({ ...studentData, skills: updatedSkills });
+        await fetchProfileFromDb();
       }
     } catch (err) {
-      console.error('[AddSkill Error]:', err);
+      console.error('[SaveSkill Error]:', err);
     } finally {
       setSaveLoading(false);
       setIsModalOpen(false);
-      setCustomSkillInput('');
-      setNewSkillName('Spring Boot');
-      setNewSkillLevel(3);
-      setTimeout(() => setFeedbackMessage(''), 3000);
+      setTimeout(() => setFeedbackMessage(''), 4000);
     }
   };
+
+  const handleDeleteSkill = async (skillId, skillName) => {
+    if (!window.confirm(`Are you sure you want to remove "${skillName}" from your database profile?`)) {
+      return;
+    }
+
+    try {
+      const response = await authFetch(`/student/skills/${skillId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: token ? `Bearer ${token}` : '',
+        },
+      });
+
+      if (response.ok) {
+        setFeedbackMessage(`Skill "${skillName}" removed from database.`);
+        await fetchProfileFromDb();
+        setTimeout(() => setFeedbackMessage(''), 3000);
+      }
+    } catch (err) {
+      console.error('[DeleteSkill Error]:', err);
+    }
+  };
+
+  // Render Vector Star Rating using Lucide Star icon
+  const renderStars = (rating, interactive = false, onRate = null) => {
+    const stars = [];
+    for (let i = 1; i <= 5; i++) {
+      const isFilled = i <= rating;
+      stars.push(
+        <button
+          key={i}
+          type="button"
+          onClick={() => interactive && onRate && onRate(i)}
+          style={{
+            background: 'none',
+            border: 'none',
+            padding: '2px',
+            cursor: interactive ? 'pointer' : 'default',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+          title={`${i} Star${i > 1 ? 's' : ''}`}
+        >
+          <Star
+            size={interactive ? 24 : 16}
+            color={isFilled ? '#f59e0b' : '#cbd5e1'}
+            fill={isFilled ? '#f59e0b' : 'none'}
+            strokeWidth={1.8}
+          />
+        </button>
+      );
+    }
+    return <div style={{ display: 'inline-flex', alignItems: 'center' }}>{stars}</div>;
+  };
+
+  if (loading) {
+    return <Loader message="Loading student profile and verified competencies..." />;
+  }
 
   const displayName = studentData.name ? `Employee: ${studentData.name}` : 'Employee: Arun';
   const displayRole = (studentData.role || 'student').toUpperCase();
@@ -147,11 +215,12 @@ export default function StudentProfile() {
     <div style={styles.container}>
       {feedbackMessage && (
         <div style={styles.feedbackBanner}>
-          <span>✓ {feedbackMessage}</span>
+          <Check size={16} color="#137333" strokeWidth={2.5} />
+          <span>{feedbackMessage}</span>
         </div>
       )}
 
-      {/* Header Block */}
+      {/* Header Profile Card */}
       <div style={styles.headerCard}>
         <div style={styles.avatar}>{(studentData.name || 'A')[0]}</div>
         <div style={styles.headerInfo}>
@@ -161,7 +230,7 @@ export default function StudentProfile() {
           </div>
           <p style={styles.email}>{studentData.email}</p>
           <div style={styles.targetTitleRow}>
-            <span style={styles.targetLabel}>Target Title:</span>
+            <span style={styles.targetLabel}>Target Career Path:</span>
             <span style={styles.targetValue}>{studentData.targetTitle}</span>
           </div>
         </div>
@@ -173,14 +242,12 @@ export default function StudentProfile() {
           <div>
             <h3 style={styles.tableTitle}>Skills Assessment Matrix</h3>
             <p style={styles.tableSubtitle}>
-              Live competency scores retrieved directly from the database
+              Live competency evaluations and scores stored directly in the database
             </p>
           </div>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            style={styles.addSkillBtn}
-          >
-            + Add Skill
+          <button onClick={openAddModal} style={styles.addSkillBtn}>
+            <Plus size={15} strokeWidth={2.5} />
+            <span>Add Skill</span>
           </button>
         </div>
 
@@ -188,73 +255,117 @@ export default function StudentProfile() {
           <table style={styles.table}>
             <thead>
               <tr style={styles.trHead}>
-                <th style={styles.th}>Skill</th>
-                <th style={{ ...styles.th, width: '48%' }}>Current Score (1–5)</th>
-                <th style={{ ...styles.th, textAlign: 'center' }}>Proficiency Tag</th>
+                <th style={styles.th}>Skill Name</th>
+                <th style={{ ...styles.th, width: '28%' }}>Current Score (1–5)</th>
+                <th style={{ ...styles.th, textAlign: 'center' }}>Proficiency Rating</th>
+                <th style={{ ...styles.th, textAlign: 'center' }}>Level Tag</th>
+                <th style={{ ...styles.th, textAlign: 'center' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {studentData.skills.map((item, index) => (
-                <tr
-                  key={item.id || item.skill}
-                  style={{
-                    ...styles.trBody,
-                    backgroundColor: index % 2 === 0 ? '#ffffff' : '#fafafa',
-                  }}
-                >
-                  <td style={styles.tdSkill}>{item.skill}</td>
-                  <td style={styles.td}>
-                    <ProgressBar current={item.level} total={5} showLabel={true} />
-                  </td>
-                  <td style={{ ...styles.td, textAlign: 'center' }}>
-                    <span style={{ ...styles.tag, ...getTagStyle(item.tag) }}>
-                      {item.tag}
-                    </span>
+              {loading ? (
+                <tr>
+                  <td colSpan="5" style={styles.emptyState}>
+                    Loading skills from database...
                   </td>
                 </tr>
-              ))}
+              ) : studentData.skills.length === 0 ? (
+                <tr>
+                  <td colSpan="5" style={styles.emptyState}>
+                    No skills recorded in database. Click "Add Skill" to start.
+                  </td>
+                </tr>
+              ) : (
+                studentData.skills.map((item, index) => (
+                  <tr
+                    key={item.id || item.skill}
+                    style={{
+                      ...styles.trBody,
+                      backgroundColor: index % 2 === 0 ? '#ffffff' : '#fafafa',
+                    }}
+                  >
+                    <td style={styles.tdSkill}>{item.skill}</td>
+                    <td style={styles.td}>
+                      <ProgressBar current={item.level} total={5} showLabel={true} />
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'center' }}>
+                      <div style={styles.starsWrapper}>
+                        {renderStars(item.level)}
+                        <span style={styles.starNumber}>({item.level}/5)</span>
+                      </div>
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'center' }}>
+                      <span style={{ ...styles.tag, ...getTagStyle(item.tag) }}>
+                        {item.tag}
+                      </span>
+                    </td>
+                    <td style={{ ...styles.td, textAlign: 'center' }}>
+                      <div style={styles.actionButtonsRow}>
+                        <button
+                          onClick={() => openEditModal(item)}
+                          style={styles.editBtn}
+                          title="Update Score in Database"
+                        >
+                          <Edit3 size={13} />
+                          <span>Update</span>
+                        </button>
+                        {item.id && (
+                          <button
+                            onClick={() => handleDeleteSkill(item.id, item.skill)}
+                            style={styles.deleteBtn}
+                            title="Remove Skill"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Add Skill Modal */}
+      {/* Add / Update Skill Modal */}
       {isModalOpen && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalCard}>
             <div style={styles.modalHeader}>
-              <h3 style={styles.modalTitle}>Add / Update Skill Proficiency</h3>
-              <button
-                onClick={() => setIsModalOpen(false)}
-                style={styles.closeBtn}
-              >
-                ✕
+              <h3 style={styles.modalTitle}>
+                {editingSkill ? `Update Score: ${editingSkill.skill}` : 'Add New Skill to Profile'}
+              </h3>
+              <button onClick={() => setIsModalOpen(false)} style={styles.closeBtn}>
+                <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleAddSkill} style={styles.modalForm}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Select Skill</label>
-                <select
-                  value={newSkillName}
-                  onChange={(e) => setNewSkillName(e.target.value)}
-                  style={styles.select}
-                  disabled={saveLoading}
-                >
-                  {availableSkillOptions.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <form onSubmit={handleSaveSkill} style={styles.modalForm}>
+              {!editingSkill && (
+                <div style={styles.inputGroup}>
+                  <label style={styles.label}>Select or Enter Skill</label>
+                  <select
+                    value={skillNameInput}
+                    onChange={(e) => setSkillNameInput(e.target.value)}
+                    style={styles.select}
+                    disabled={saveLoading}
+                  >
+                    {commonSkillCatalog.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-              {newSkillName === 'Other (Custom)' && (
+              {(!editingSkill && skillNameInput === 'Other (Custom)') && (
                 <div style={styles.inputGroup}>
                   <label style={styles.label}>Custom Skill Name</label>
                   <input
                     type="text"
-                    placeholder="e.g. Flutter, Kotlin, Terraform"
+                    placeholder="e.g. Kotlin, Flutter, Terraform, GraphQL"
                     value={customSkillInput}
                     onChange={(e) => setCustomSkillInput(e.target.value)}
                     style={styles.input}
@@ -266,11 +377,22 @@ export default function StudentProfile() {
 
               <div style={styles.inputGroup}>
                 <label style={styles.label}>
-                  Proficiency Level (1–5): <strong>{newSkillLevel}/5 ({getTagFromLevel(newSkillLevel)})</strong>
+                  Self-Evaluation Rating:{' '}
+                  <strong>
+                    {skillRating} / 5 ({getTagFromLevel(skillRating)})
+                  </strong>
                 </label>
+                <div style={styles.starPickerBox}>
+                  {renderStars(skillRating, true, (newVal) => setSkillRating(newVal))}
+                  <span style={styles.starPickerHint}>Select rating from 1 to 5</span>
+                </div>
+              </div>
+
+              <div style={styles.inputGroup}>
+                <label style={styles.label}>Score Level Dropdown</label>
                 <select
-                  value={newSkillLevel}
-                  onChange={(e) => setNewSkillLevel(parseInt(e.target.value, 10))}
+                  value={skillRating}
+                  onChange={(e) => setSkillRating(parseInt(e.target.value, 10))}
                   style={styles.select}
                   disabled={saveLoading}
                 >
@@ -308,20 +430,25 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '28px',
-    maxWidth: '1000px',
+    maxWidth: '1050px',
     margin: '0 auto',
     padding: '40px 24px 60px 24px',
     width: '100%',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif',
+    fontFamily:
+      '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", sans-serif',
   },
   feedbackBanner: {
-    padding: '12px 16px',
+    padding: '12px 18px',
     backgroundColor: '#e6f7ed',
     border: '1px solid #c6f0d2',
     borderRadius: '12px',
     color: '#137333',
     fontSize: '13px',
     fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    boxShadow: '0 2px 8px rgba(19, 115, 51, 0.08)',
   },
   headerCard: {
     backgroundColor: '#ffffff',
@@ -422,6 +549,9 @@ const styles = {
     color: '#86868b',
   },
   addSkillBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
     padding: '8px 18px',
     backgroundColor: '#0071e3',
     color: '#ffffff',
@@ -447,7 +577,7 @@ const styles = {
     borderBottom: '1px solid rgba(0, 0, 0, 0.06)',
   },
   th: {
-    padding: '14px 28px',
+    padding: '14px 24px',
     fontSize: '12px',
     fontWeight: '600',
     color: '#86868b',
@@ -459,14 +589,24 @@ const styles = {
     transition: 'background-color 0.15s ease',
   },
   tdSkill: {
-    padding: '16px 28px',
+    padding: '16px 24px',
     fontSize: '14px',
     fontWeight: '600',
     color: '#1d1d1f',
   },
   td: {
-    padding: '16px 28px',
+    padding: '16px 24px',
     verticalAlign: 'middle',
+  },
+  starsWrapper: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+  starNumber: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#86868b',
   },
   tag: {
     display: 'inline-block',
@@ -475,6 +615,43 @@ const styles = {
     fontSize: '12px',
     fontWeight: '600',
     minWidth: '85px',
+  },
+  actionButtonsRow: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  editBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '5px 12px',
+    backgroundColor: '#f5f5f7',
+    border: '1px solid rgba(0, 0, 0, 0.08)',
+    borderRadius: '980px',
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#0071e3',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
+  },
+  deleteBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '5px 8px',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(207, 19, 34, 0.2)',
+    borderRadius: '980px',
+    fontSize: '11px',
+    color: '#cf1322',
+    cursor: 'pointer',
+  },
+  emptyState: {
+    padding: '36px',
+    textAlign: 'center',
+    color: '#86868b',
+    fontSize: '14px',
   },
   modalOverlay: {
     position: 'fixed',
@@ -495,7 +672,7 @@ const styles = {
     backgroundColor: '#ffffff',
     borderRadius: '20px',
     padding: '28px',
-    maxWidth: '420px',
+    maxWidth: '430px',
     width: '100%',
     boxShadow: '0 20px 40px rgba(0, 0, 0, 0.15)',
     display: 'flex',
@@ -516,10 +693,11 @@ const styles = {
   closeBtn: {
     background: 'none',
     border: 'none',
-    fontSize: '16px',
     color: '#86868b',
     cursor: 'pointer',
     padding: '4px',
+    display: 'flex',
+    alignItems: 'center',
   },
   modalForm: {
     display: 'flex',
@@ -553,6 +731,20 @@ const styles = {
     color: '#1d1d1f',
     backgroundColor: '#fbfbfd',
     outline: 'none',
+  },
+  starPickerBox: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    padding: '12px 14px',
+    backgroundColor: '#fbfbfd',
+    borderRadius: '10px',
+    border: '1px solid rgba(0, 0, 0, 0.08)',
+  },
+  starPickerHint: {
+    fontSize: '11px',
+    color: '#86868b',
+    marginTop: '4px',
   },
   modalActions: {
     display: 'flex',

@@ -11,17 +11,17 @@ export default function Navbar() {
 
   const adminNavItems = [
     { id: 'dashboard', path: '/admin/dashboard', label: 'Admin Dashboard' },
-    { id: 'profile', path: '/student-profile', label: 'Employees / Students' },
-    { id: 'jobs', path: '/job-details', label: 'Job Requirements' },
-    { id: 'analysis', path: '/skill-gap-analysis', label: 'Skill Gap Matrix' },
-    { id: 'recommendations', path: '/recommendations', label: 'Recommendations' },
+    { id: 'students', path: '/admin/students', label: 'Student Directory & Filters' },
+    { id: 'candidates', path: '/admin/candidates', label: 'Candidate Screening' },
+    { id: 'jobs', path: '/job-details', label: 'Job Postings' },
+    { id: 'analysis', path: '/skill-gap-analysis', label: 'Gap Matrix' },
   ];
 
   const studentNavItems = [
-    { id: 'profile', path: '/student-profile', label: 'My Profile' },
-    { id: 'jobs', path: '/job-details', label: 'Job Requirements' },
+    { id: 'profile', path: '/student-profile', label: 'My Profile (Skills)' },
+    { id: 'jobs', path: '/job-details', label: 'Job Postings' },
     { id: 'analysis', path: '/skill-gap-analysis', label: 'Skill Gap Analysis' },
-    { id: 'recommendations', path: '/recommendations', label: 'My Recommendations' },
+    { id: 'recommendations', path: '/recommendations', label: 'Recommendations' },
   ];
 
   const navItems = isAdmin ? adminNavItems : studentNavItems;
