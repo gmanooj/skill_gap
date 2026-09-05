@@ -6,9 +6,9 @@ import bcrypt
 import jwt
 from django.conf import settings
 from django.http import JsonResponse
-from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from .models import Student, Skill, StudentSkill, Job, JobSkill, Application, Recommendation
+from .services import SkillGapService
 
 EMAIL_REGEX = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
 JWT_SECRET = getattr(settings, 'JWT_SECRET', 'skill_gap_analyzer_jwt_super_secure_secret_2026_key')
@@ -955,3 +955,254 @@ def admin_update_application_status_view(request):
 
     except Exception as e:
         return JsonResponse({'success': False, 'message': str(e)}, status=500)
+
+# ============================================================================
+# API Workflow Endpoints (Directly mapped from System Architecture Diagram)
+# ============================================================================
+
+@csrf_exempt
+def api_students_collection_view(request):
+    """
+    POST /api/students: Create student / employee
+    GET /api/students: List all students
+    """
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            name = data.get('name', '').strip()
+            email = data.get('email', '').strip().lower()
+            password = data.get('password', 'Manooj@123')
+            target_title = data.get('target_title', 'Software Developer')
+
+            if not name or not email:
+                return JsonResponse({'success': False, 'message': 'name and email are required.'}, status=400)
+
+            if Student.objects.filter(email=email).exists():
+                return JsonResponse({'success': False, 'message': 'Student with this email already exists.'}, status=409)
+
+            hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+            student = Student.objects.create(
+                name=name,
+                email=email,
+                password=hashed_pw,
+                role='student',
+                target_title=target_title
+            )
+
+            return JsonResponse({
+                'success': True,
+                'message': 'Student / employee created successfully.',
+                'student': {
+                    'id': student.student_id,
+                    'name': student.name,
+                    'email': student.email,
+                    'target_title': student.target_title
+                }
+            }, status=201)
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)}, status=500)
+
+    # GET
+    students = Student.objects.filter(role='student').values('student_id', 'name', 'email', 'target_title', 'created_at')
+    return JsonResponse({'success': True, 'students': list(students)})
+
+@csrf_exempt
+def api_student_skills_view(request, student_id):
+    """
+    GET /api/students/{id}/skills: Get current skills
+    POST /api/students/{id}/skills: Add / update skill
+    """
+    student = Student.objects.filter(student_id=student_id).first()
+    if not student:
+        return JsonResponse({'success': False, 'message': 'Student not found.'}, status=404)
+
+    if request.method == 'GET':
+        skills = [
+            {
+                'id': s.id,
+                'skill_id': s.skill.skill_id,
+                'name': s.skill.name,
+                'category': s.skill.category,
+                'proficiency_level': s.proficiency_level,
+                'proficiency_tag': s.proficiency_tag
+            }
+            for s in student.skills.select_related('skill').all()
+        ]
+        return JsonResponse({'success': True, 'student_id': student_id, 'skills': skills})
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            skill_name = data.get('skill_name', '').strip()
+            level = int(data.get('proficiency_level', 3))
+
+            if not skill_name:
+                return JsonResponse({'success': False, 'message': 'skill_name is required.'}, status=400)
+
+            skill_obj, _ = Skill.objects.get_or_create(
+                name=skill_name,
+                defaults={'category': data.get('category', 'Technical')}
+            )
+
+            student_skill, created = StudentSkill.objects.update_or_create(
+                student=student,
+                skill=skill_obj,
+                defaults={
+                    'proficiency': str(level)
+                }
+            )
+
+            return JsonResponse({
+                'success': True,
+                'message': 'Skill updated successfully.',
+                'skill': {
+                    'name': skill_obj.name,
+                    'level': student_skill.proficiency_level,
+                    'tag': student_skill.proficiency_tag
+                }
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)}, status=500)
+
+@csrf_exempt
+def api_job_detail_and_skills_view(request, job_id):
+    """
+    GET /api/jobs/{id}: Get job details
+    POST /api/jobs/{id}/skills: Define required skills
+    """
+    job = Job.objects.prefetch_related('job_skills__skill').filter(job_id=job_id).first()
+    if not job:
+        return JsonResponse({'success': False, 'message': 'Job not found.'}, status=404)
+
+    if request.method == 'GET':
+        reqs = [
+            {
+                'skill': r.skill.name,
+                'required_level': r.level_int,
+                'mandatory': r.mandatory,
+                'category': r.skill.category
+            }
+            for r in job.job_skills.all()
+        ]
+        return JsonResponse({
+            'success': True,
+            'job': {
+                'id': job.job_id,
+                'title': job.title,
+                'company': job.company,
+                'location': job.location,
+                'department': job.department,
+                'experience': job.experience,
+                'description': job.description,
+                'requirements': reqs
+            }
+        })
+
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body.decode('utf-8'))
+            skill_name = data.get('skill_name', '').strip()
+            level = int(data.get('required_level', 3))
+            mandatory = bool(data.get('mandatory', True))
+
+            if not skill_name:
+                return JsonResponse({'success': False, 'message': 'skill_name is required.'}, status=400)
+
+            skill_obj, _ = Skill.objects.get_or_create(
+                name=skill_name,
+                defaults={'category': data.get('category', 'Technical')}
+            )
+
+            job_skill, created = JobSkill.objects.update_or_create(
+                job=job,
+                skill=skill_obj,
+                defaults={'required_level': str(level), 'mandatory': mandatory}
+            )
+
+            return JsonResponse({
+                'success': True,
+                'message': f'Required skill {skill_obj.name} defined for {job.company}.',
+                'skill': {
+                    'name': skill_obj.name,
+                    'required_level': job_skill.level_int,
+                    'mandatory': job_skill.mandatory
+                }
+            })
+        except Exception as e:
+            return JsonResponse({'success': False, 'message': str(e)}, status=500)
+
+def api_student_job_skill_gap_view(request, student_id, job_id):
+    """
+    GET /api/students/{studentId}/jobs/{jobId}/skill-gap
+    Controller action delegating business calculation to SkillGapService.
+    """
+    student = Student.objects.filter(student_id=student_id).prefetch_related('skills__skill').first()
+    job = Job.objects.filter(job_id=job_id).prefetch_related('job_skills__skill').first()
+
+    if not student:
+        return JsonResponse({'success': False, 'message': f'Student {student_id} not found.'}, status=404)
+    if not job:
+        return JsonResponse({'success': False, 'message': f'Job {job_id} not found.'}, status=404)
+
+    result = SkillGapService.calculate_skill_gap(student, job)
+    return JsonResponse({
+        'success': True,
+        **result
+    })
+
+def api_student_job_recommendations_view(request, student_id, job_id):
+    """
+    GET /api/students/{studentId}/jobs/{jobId}/recommendations
+    """
+    gap_result = api_student_job_skill_gap_view(request, student_id, job_id)
+    if gap_result.status_code != 200:
+        return gap_result
+    
+    data = json.loads(gap_result.content.decode('utf-8'))
+    return JsonResponse({
+        'success': True,
+        'student_id': student_id,
+        'job_id': job_id,
+        'company': data['job']['company'],
+        'recommendations': data['recommendations']
+    })
+
+@csrf_exempt
+def api_applications_collection_view(request):
+    """
+    POST /api/applications: Create application
+    """
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'POST method required.'}, status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+        student_id = data.get('student_id')
+        job_id = data.get('job_id')
+
+        if not student_id or not job_id:
+            return JsonResponse({'success': False, 'message': 'student_id and job_id are required.'}, status=400)
+
+        student = Student.objects.filter(student_id=student_id).first()
+        job = Job.objects.filter(job_id=job_id).first()
+
+        if not student or not job:
+            return JsonResponse({'success': False, 'message': 'Student or Job not found.'}, status=404)
+
+        app, created = Application.objects.get_or_create(
+            student=student,
+            job=job,
+            defaults={'status': 'Applied', 'match_percent': 78.0}
+        )
+
+        return JsonResponse({
+            'success': True,
+            'message': f"Application created for {student.name} at {job.company}.",
+            'application_id': app.id,
+            'status': app.status,
+            'created': created
+        }, status=201 if created else 200)
+
+    except Exception as e:
+        return JsonResponse({'success': False, 'message': str(e)}, status=500)
+

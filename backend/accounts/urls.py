@@ -15,6 +15,12 @@ from .views import (
     admin_students_list_view,
     admin_candidate_screening_view,
     admin_update_application_status_view,
+    api_students_collection_view,
+    api_student_skills_view,
+    api_job_detail_and_skills_view,
+    api_student_job_skill_gap_view,
+    api_student_job_recommendations_view,
+    api_applications_collection_view,
 )
 
 urlpatterns = [
@@ -64,4 +70,13 @@ urlpatterns = [
 
     path('admin/update-application-status', admin_update_application_status_view, name='admin_update_application_status'),
     path('auth/admin/update-application-status', admin_update_application_status_view, name='auth_admin_update_application_status'),
+
+    # Architecture Spec Endpoints (from flow diagram)
+    path('students', api_students_collection_view, name='api_students'),
+    path('students/<int:student_id>/skills', api_student_skills_view, name='api_student_skills'),
+    path('jobs/<int:job_id>', api_job_detail_and_skills_view, name='api_job_detail'),
+    path('jobs/<int:job_id>/skills', api_job_detail_and_skills_view, name='api_job_skills'),
+    path('students/<int:student_id>/jobs/<int:job_id>/skill-gap', api_student_job_skill_gap_view, name='api_student_job_skill_gap'),
+    path('students/<int:student_id>/jobs/<int:job_id>/recommendations', api_student_job_recommendations_view, name='api_student_job_recommendations'),
+    path('applications', api_applications_collection_view, name='api_applications'),
 ]
